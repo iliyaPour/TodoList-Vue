@@ -26,14 +26,16 @@ defineOptions({
     },
 });
 
+type List = {
+    id: number;
+    name: string;
+    color?: string;
+    tasks_count?: number;
+    created_at: string;
+};
+
 defineProps<{
-    lists: Array<{
-        id: number;
-        name: string;
-        color?: string;
-        tasks_count?: number;
-        created_at: string;
-    }>;
+    lists: List[];
 }>();
 
 const isCreateDialogOpen = ref(false);
@@ -51,7 +53,7 @@ const editForm = useForm({
     color: '#6366f1',
 });
 
-const openEditDialog = (list: (typeof props.lists)[number]) => {
+const openEditDialog = (list: List) => {
     editingList.value = {
         id: list.id,
         name: list.name,

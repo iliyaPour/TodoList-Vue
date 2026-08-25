@@ -323,31 +323,19 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                     </div>
                     <div class="space-y-2">
                         <Label>List</Label>
-                        <Select v-model="listId">
-                            <SelectTrigger>
-                                <SelectValue placeholder="All Lists" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All Lists</SelectItem>
-                                <SelectItem v-for="list in lists" :key="list.id" :value="String(list.id)">
-                                    {{ list.name }}
-                                </SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <select v-model="listId" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">All Lists</option>
+                            <option v-for="list in lists" :key="list.id" :value="list.id">{{ list.name }}</option>
+                        </select>
                     </div>
                     <div class="space-y-2">
                         <Label>Priority</Label>
-                        <Select v-model="priority">
-                            <SelectTrigger>
-                                <SelectValue placeholder="All Priorities" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All Priorities</SelectItem>
-                                <SelectItem value="low">Low</SelectItem>
-                                <SelectItem value="normal">Normal</SelectItem>
-                                <SelectItem value="high">High</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <select v-model="priority" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">All Priorities</option>
+                            <option value="low">Low</option>
+                            <option value="normal">Normal</option>
+                            <option value="high">High</option>
+                        </select>
                     </div>
                 </div>
             </CardContent>
