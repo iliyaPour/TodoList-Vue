@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { Plus, Search, X, Pencil, Trash2, Loader2 } from '@lucide/vue';
+import { Calendar, Loader2, Pencil, Plus, Search, Trash2, User as UserIcon, X } from '@lucide/vue';
 import { watchDebounced } from '@vueuse/core';
 import { ref } from 'vue';
 import InputError from '@/components/InputError.vue';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -35,12 +36,19 @@ defineOptions({
     },
 });
 
+interface UserSummary {
+    id: number;
+    name: string;
+}
+
 interface Task {
     id: number;
     title: string;
     description: string | null;
     priority: 'low' | 'normal' | 'high';
     completed: boolean;
+    due_date: string | null;
+    completed_at: string | null;
     created_at: string;
     list: {
         id: number;
@@ -48,6 +56,9 @@ interface Task {
         color?: string;
     };
     list_id: number;
+    creator?: UserSummary | null;
+    assignee?: UserSummary | null;
+    completed_by?: UserSummary | null;
 }
 
 interface TodoList {
@@ -74,16 +85,22 @@ interface PaginationTasks {
 const props = defineProps<{
     tasks: PaginationTasks;
     lists: TodoList[];
+    users: UserSummary[];
     filters: {
         search?: string;
         priority?: string;
         list_id?: string;
+        assigned_to?: string;
+        status?: string;
     };
 }>();
 
 const search = ref(props.filters.search || '');
 const priority = ref(props.filters.priority || '');
 const listId = ref(props.filters.list_id || '');
+const assignedTo = ref(props.filters.assigned_to || '');
+const status = ref(props.filters.status || '');
+
 const isCreateDialogOpen = ref(false);
 const isEditDialogOpen = ref(false);
 const editingTask = ref<Task | null>(null);
@@ -94,19 +111,25 @@ const createForm = useForm({
     description: '',
     list_id: props.filters.list_id || '',
     priority: 'normal',
+    assigned_to: '',
+    due_date: '',
 });
 
 const editForm = useForm({
     title: '',
     description: '',
     priority: 'normal',
+    assigned_to: '',
+    due_date: '',
 });
 
-watchDebounced([search, priority, listId], () => {
+watchDebounced([search, priority, listId, assignedTo, status], () => {
     router.get('/tasks', {
         search: search.value || undefined,
         priority: priority.value || undefined,
         list_id: listId.value || undefined,
+        assigned_to: assignedTo.value || undefined,
+        status: status.value || undefined,
     }, {
         preserveState: true,
         preserveScroll: true,
@@ -117,14 +140,13 @@ const clearFilters = () => {
     search.value = '';
     priority.value = '';
     listId.value = '';
+    assignedTo.value = '';
+    status.value = '';
     router.get('/tasks', {}, { preserveState: true, replace: true });
 };
 
 const toggleTaskCompletion = (task: Task) => {
     router.put(`/tasks/${task.id}`, {
-        title: task.title,
-        description: task.description,
-        priority: task.priority,
         completed: !task.completed,
     }, { preserveScroll: true });
 };
@@ -170,18 +192,27 @@ const openEditDialog = (task: Task) => {
     editForm.title = task.title;
     editForm.description = task.description || '';
     editForm.priority = task.priority;
+    editForm.assigned_to = task.assignee?.id ? String(task.assignee.id) : '';
+    editForm.due_date = task.due_date ? task.due_date.slice(0, 10) : '';
     isEditDialogOpen.value = true;
 };
 
-const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destructive' => {
-    switch (priority) {
-        case 'high':
-            return 'destructive';
-        case 'low':
-            return 'secondary';
-        default:
-            return 'default';
+const getDueDateBadge = (dueDate: string | null, isCompleted: boolean) => {
+    if (!dueDate || isCompleted) {
+        return null;
     }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    if (dueDate < today) {
+        return { label: `Overdue: ${dueDate}`, class: 'border-red-300 text-red-700 bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400' };
+    }
+
+    if (dueDate === today) {
+        return { label: 'Due Today', class: 'border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400' };
+    }
+
+    return { label: `Due: ${dueDate}`, class: 'border-muted text-muted-foreground' };
 };
 </script>
 
@@ -189,10 +220,10 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
     <Head title="Tasks" />
 
     <div class="p-6 space-y-6">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between flex-wrap gap-4">
             <div>
-                <h1 class="text-3xl font-bold">All Tasks</h1>
-                <p class="text-muted-foreground">View and manage all your tasks ({{ tasks.total }} total)</p>
+                <h1 class="text-3xl font-bold">Shared Project Tasks</h1>
+                <p class="text-muted-foreground">Collaborate on tasks, track priorities, and get things done together ({{ tasks.total }} total)</p>
             </div>
 
             <Dialog v-model:open="isCreateDialogOpen">
@@ -205,50 +236,73 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Add New Task</DialogTitle>
-                        <DialogDescription>Add a new task to your lists.</DialogDescription>
+                        <DialogDescription>Create a task for the project and assign it to you or your friend.</DialogDescription>
                     </DialogHeader>
                     <form @submit.prevent="createTask" class="space-y-4">
                         <div class="space-y-2">
                             <Label for="title">Task Title</Label>
-                            <Input id="title" v-model="createForm.title" required placeholder="Enter Task Title" />
+                            <Input id="title" v-model="createForm.title" required placeholder="e.g. Implement API authentication" />
                             <InputError :message="createForm.errors?.title" />
                         </div>
-                        <div class="space-y-2">
-                            <Label for="create-list-id">List</Label>
-                            <Select v-model="createForm.list_id" required>
-                                <SelectTrigger id="create-list-id">
-                                    <SelectValue placeholder="Select a list" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem v-for="list in lists" :key="list.id" :value="String(list.id)">
-                                        {{ list.name }}
-                                    </SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <InputError :message="createForm.errors?.list_id" />
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-2">
+                                <Label for="create-list-id">List</Label>
+                                <Select v-model="createForm.list_id" required>
+                                    <SelectTrigger id="create-list-id">
+                                        <SelectValue placeholder="Select list" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem v-for="list in lists" :key="list.id" :value="String(list.id)">
+                                            {{ list.name }}
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <InputError :message="createForm.errors?.list_id" />
+                            </div>
+                            <div class="space-y-2">
+                                <Label for="create-priority">Priority</Label>
+                                <Select v-model="createForm.priority">
+                                    <SelectTrigger id="create-priority">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="low">Low</SelectItem>
+                                        <SelectItem value="normal">Normal</SelectItem>
+                                        <SelectItem value="high">High</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-2">
+                                <Label for="create-assigned-to">Assign To</Label>
+                                <select
+                                    id="create-assigned-to"
+                                    v-model="createForm.assigned_to"
+                                    class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                    <option value="">Unassigned</option>
+                                    <option v-for="u in users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+                                </select>
+                            </div>
+                            <div class="space-y-2">
+                                <Label for="create-due-date">Due Date</Label>
+                                <Input
+                                    id="create-due-date"
+                                    type="date"
+                                    v-model="createForm.due_date"
+                                />
+                            </div>
                         </div>
                         <div class="space-y-2">
-                            <Label for="description">Description</Label>
+                            <Label for="description">Description & Notes</Label>
                             <textarea
                                 id="description"
                                 v-model="createForm.description"
-                                placeholder="Add description..."
+                                placeholder="Add context, details, or checklist for your teammate..."
                                 rows="3"
                                 class="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             />
-                        </div>
-                        <div class="space-y-2">
-                            <Label for="priority">Priority</Label>
-                            <Select v-model="createForm.priority">
-                                <SelectTrigger id="priority">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="low">Low</SelectItem>
-                                    <SelectItem value="normal">Normal</SelectItem>
-                                    <SelectItem value="high">High</SelectItem>
-                                </SelectContent>
-                            </Select>
                         </div>
                         <Button type="submit" class="w-full" :disabled="createForm.processing">
                             <Loader2 v-if="createForm.processing" class="h-4 w-4 mr-2 animate-spin" />
@@ -262,7 +316,7 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Edit Task</DialogTitle>
-                        <DialogDescription>Update the details of your task.</DialogDescription>
+                        <DialogDescription>Update details, assignee, or due date.</DialogDescription>
                     </DialogHeader>
                     <form v-if="editingTask" @submit.prevent="updateTask" class="space-y-4">
                         <div class="space-y-2">
@@ -270,8 +324,42 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                             <Input id="edit-title" v-model="editForm.title" required placeholder="Enter Task Title" />
                             <InputError :message="editForm.errors?.title" />
                         </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="space-y-2">
+                                <Label for="edit-priority">Priority</Label>
+                                <Select v-model="editForm.priority">
+                                    <SelectTrigger id="edit-priority">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="low">Low</SelectItem>
+                                        <SelectItem value="normal">Normal</SelectItem>
+                                        <SelectItem value="high">High</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div class="space-y-2">
+                                <Label for="edit-assigned-to">Assign To</Label>
+                                <select
+                                    id="edit-assigned-to"
+                                    v-model="editForm.assigned_to"
+                                    class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                    <option value="">Unassigned</option>
+                                    <option v-for="u in users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="space-y-2">
-                            <Label for="edit-description">Description</Label>
+                            <Label for="edit-due-date">Due Date</Label>
+                            <Input
+                                id="edit-due-date"
+                                type="date"
+                                v-model="editForm.due_date"
+                            />
+                        </div>
+                        <div class="space-y-2">
+                            <Label for="edit-description">Description & Notes</Label>
                             <textarea
                                 id="edit-description"
                                 v-model="editForm.description"
@@ -279,19 +367,6 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                                 rows="3"
                                 class="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             />
-                        </div>
-                        <div class="space-y-2">
-                            <Label for="edit-priority">Priority</Label>
-                            <Select v-model="editForm.priority">
-                                <SelectTrigger id="edit-priority">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="low">Low</SelectItem>
-                                    <SelectItem value="normal">Normal</SelectItem>
-                                    <SelectItem value="high">High</SelectItem>
-                                </SelectContent>
-                            </Select>
                         </div>
                         <Button type="submit" class="w-full" :disabled="editForm.processing">
                             <Loader2 v-if="editForm.processing" class="h-4 w-4 mr-2 animate-spin" />
@@ -305,16 +380,16 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
         <Card>
             <CardHeader>
                 <div class="flex items-center justify-between">
-                    <CardTitle>Filters</CardTitle>
+                    <CardTitle>Filters & Search</CardTitle>
                     <Button variant="ghost" size="sm" @click="clearFilters">
-                        <X class="h-4 w-4" />
+                        <X class="h-4 w-4 mr-1" />
                         Clear Filters
                     </Button>
                 </div>
             </CardHeader>
             <CardContent>
-                <div class="grid gap-4 md:grid-cols-3">
-                    <div class="space-y-2">
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                    <div class="space-y-2 sm:col-span-2 lg:col-span-1">
                         <Label>Search</Label>
                         <div class="relative">
                             <Search class="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -332,60 +407,136 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                         <Label>Priority</Label>
                         <select v-model="priority" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                             <option value="">All Priorities</option>
-                            <option value="low">Low</option>
+                            <option value="high">🔥 High</option>
                             <option value="normal">Normal</option>
-                            <option value="high">High</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                    <div class="space-y-2">
+                        <Label>Assignee</Label>
+                        <select v-model="assignedTo" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">All Team</option>
+                            <option value="unassigned">Unassigned</option>
+                            <option v-for="u in users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+                        </select>
+                    </div>
+                    <div class="space-y-2">
+                        <Label>Status</Label>
+                        <select v-model="status" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">All Tasks</option>
+                            <option value="pending">Pending</option>
+                            <option value="completed">Completed</option>
+                            <option value="overdue">⚠️ Overdue</option>
                         </select>
                     </div>
                 </div>
             </CardContent>
 
-            <CardHeader>
-                <CardTitle>Tasks ({{ tasks.data.length }} of {{ tasks.total }})</CardTitle>
+            <CardHeader class="pt-0">
+                <CardTitle class="text-base text-muted-foreground font-medium">Tasks ({{ tasks.data.length }} of {{ tasks.total }})</CardTitle>
             </CardHeader>
             <CardContent>
                 <div v-if="tasks.data.length > 0" class="space-y-4">
-                    <div class="rounded-md border">
-                        <table class="w-full caption-bottom text-sm">
-                            <thead class="[&_tr]:border-b">
+                    <div class="rounded-md border overflow-x-auto">
+                        <table class="w-full caption-bottom text-sm min-w-[700px]">
+                            <thead class="[&_tr]:border-b bg-muted/40">
                                 <tr class="border-b transition-colors hover:bg-muted/50">
-                                    <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Title</th>
-                                    <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Description</th>
+                                    <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Task & Accountability</th>
                                     <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[150px]">List</th>
+                                    <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[130px]">Assignee</th>
                                     <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[100px]">Priority</th>
-                                    <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[100px]">Actions</th>
+                                    <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground w-[140px]">Due Date</th>
+                                    <th class="h-12 px-4 text-right align-middle font-medium text-muted-foreground w-[90px]">Actions</th>
                                 </tr>
                             </thead>
                             <tbody class="[&_tr:last-child]:border-0">
-                                <tr v-for="task in tasks.data" :key="task.id" class="border-b transition-colors hover:bg-muted/50">
+                                <tr v-for="task in tasks.data" :key="task.id" class="border-b transition-colors hover:bg-muted/40">
                                     <td class="p-4 align-middle">
-                                        <div class="flex items-center gap-3">
-                                            <Checkbox :checked="task.completed" @update:checked="toggleTaskCompletion(task)" />
-                                            <span :class="{ 'line-through text-muted-foreground': task.completed }">{{ task.title }}</span>
+                                        <div class="flex items-start gap-3">
+                                            <Checkbox
+                                                :checked="task.completed"
+                                                class="mt-1"
+                                                @update:checked="toggleTaskCompletion(task)"
+                                            />
+                                            <div class="space-y-1">
+                                                <p
+                                                    class="font-medium text-sm leading-snug"
+                                                    :class="{ 'line-through text-muted-foreground': task.completed }"
+                                                >
+                                                    {{ task.title }}
+                                                </p>
+                                                <p
+                                                    v-if="task.description"
+                                                    class="text-xs text-muted-foreground line-clamp-2"
+                                                    :class="{ 'line-through opacity-70': task.completed }"
+                                                >
+                                                    {{ task.description }}
+                                                </p>
+                                                <div class="flex flex-wrap items-center gap-2 pt-0.5 text-xs text-muted-foreground">
+                                                    <span v-if="task.creator">
+                                                        Added by <span class="font-medium text-foreground">{{ task.creator.name }}</span>
+                                                    </span>
+                                                    <span v-if="task.completed && task.completed_by" class="text-green-600 dark:text-green-400 font-medium">
+                                                        • Done by {{ task.completed_by.name }}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </td>
                                     <td class="p-4 align-middle">
-                                        <span :class="{ 'line-through text-muted-foreground': task.completed }">{{ task.description || '-' }}</span>
-                                    </td>
-                                    <td class="p-4 align-middle">
                                         <div class="flex items-center gap-2">
-                                            <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: task.list.color || '#6366f1' }" />
-                                            <span class="text-sm">{{ task.list.name }}</span>
+                                            <div class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ backgroundColor: task.list?.color || '#6366f1' }" />
+                                            <span class="text-xs font-medium truncate">{{ task.list?.name }}</span>
                                         </div>
                                     </td>
                                     <td class="p-4 align-middle">
-                                        <span :class="['inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium', getPriorityVariant(task.priority) === 'destructive' ? 'border-destructive/50 text-destructive' : getPriorityVariant(task.priority) === 'secondary' ? 'border-secondary/50 bg-secondary text-secondary-foreground' : 'border-border text-foreground']">
-                                            {{ task.priority.charAt(0).toUpperCase() + task.priority.slice(1) }}
-                                        </span>
+                                        <div v-if="task.assignee" class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/60 text-secondary-foreground text-xs font-medium">
+                                            <UserIcon class="size-3" />
+                                            <span class="truncate max-w-[100px]">{{ task.assignee.name }}</span>
+                                        </div>
+                                        <span v-else class="text-xs text-muted-foreground">Unassigned</span>
                                     </td>
                                     <td class="p-4 align-middle">
-                                        <div class="flex items-center gap-2">
+                                        <Badge
+                                            v-if="task.priority === 'high'"
+                                            class="border-red-300 text-red-700 bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 font-medium"
+                                        >
+                                            High
+                                        </Badge>
+                                        <Badge
+                                            v-else-if="task.priority === 'low'"
+                                            variant="secondary"
+                                        >
+                                            Low
+                                        </Badge>
+                                        <Badge
+                                            v-else
+                                            variant="outline"
+                                        >
+                                            Normal
+                                        </Badge>
+                                    </td>
+                                    <td class="p-4 align-middle">
+                                        <div v-if="getDueDateBadge(task.due_date, task.completed)" class="inline-flex items-center gap-1">
+                                            <Calendar class="size-3 text-muted-foreground" />
+                                            <span
+                                                class="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium"
+                                                :class="getDueDateBadge(task.due_date, task.completed)?.class"
+                                            >
+                                                {{ getDueDateBadge(task.due_date, task.completed)?.label }}
+                                            </span>
+                                        </div>
+                                        <span v-else-if="task.completed" class="text-xs text-muted-foreground">Completed</span>
+                                        <span v-else class="text-xs text-muted-foreground">-</span>
+                                    </td>
+                                    <td class="p-4 align-middle text-right">
+                                        <div class="flex items-center justify-end gap-1">
                                             <Button variant="ghost" size="sm" @click="openEditDialog(task)">
                                                 <Pencil class="h-4 w-4" />
                                             </Button>
                                             <Button variant="ghost" size="sm" @click="deleteTask(task.id)" :disabled="deletingTaskId === task.id">
                                                 <Loader2 v-if="deletingTaskId === task.id" class="h-4 w-4 animate-spin" />
-                                                <Trash2 v-else class="h-4 w-4" />
+                                                <Trash2 v-else class="h-4 w-4 text-destructive" />
                                             </Button>
                                         </div>
                                     </td>
@@ -394,7 +545,7 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                         </table>
                     </div>
 
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center justify-between flex-wrap gap-4 pt-2">
                         <p class="text-sm text-muted-foreground">
                             Showing {{ tasks.data.length }} of {{ tasks.total }} tasks
                         </p>
@@ -413,7 +564,7 @@ const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destru
                     </div>
                 </div>
                 <div v-else class="text-center py-12 text-muted-foreground">
-                    No tasks found. Try adjusting your filters.
+                    No tasks found. Try adjusting your filters or click "Add Task" to get started.
                 </div>
             </CardContent>
         </Card>

@@ -10,19 +10,48 @@ Route::inertia('/', 'Welcome')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', function () {
+        $today = now()->toDateString();
+        $soon = now()->addDays(2)->toDateString();
+
         $totalLists = TodoList::count();
         $totalTasks = Task::count();
         $completedTasks = Task::where('completed', true)->count();
         $pendingTasks = Task::where('completed', false)->count();
+        $highPriorityTasks = Task::where('completed', false)->where('priority', 'high')->count();
+        $overdueTasksCount = Task::where('completed', false)
+            ->whereNotNull('due_date')
+            ->where('due_date', '<', $today)
+            ->count();
 
         $recentTasks = Task::query()
-            ->with('list:id,name,color')
+            ->with([
+                'list:id,name,color',
+                'creator:id,name',
+                'assignee:id,name',
+                'completedBy:id,name',
+            ])
             ->latest()
-            ->take(10)
+            ->take(8)
+            ->get();
+
+        $urgentTasks = Task::query()
+            ->where('completed', false)
+            ->where(function ($q) use ($soon) {
+                $q->where('priority', 'high')
+                    ->orWhere(function ($sub) use ($soon) {
+                        $sub->whereNotNull('due_date')->where('due_date', '<=', $soon);
+                    });
+            })
+            ->with(['list:id,name,color', 'assignee:id,name', 'creator:id,name'])
+            ->latest()
+            ->take(5)
             ->get();
 
         $lists = TodoList::query()
-            ->withCount('tasks')
+            ->withCount([
+                'tasks',
+                'tasks as completed_tasks_count' => fn ($q) => $q->where('completed', true),
+            ])
             ->latest()
             ->get();
 
@@ -31,7 +60,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
             'totalTasks' => $totalTasks,
             'completedTasks' => $completedTasks,
             'pendingTasks' => $pendingTasks,
+            'highPriorityTasks' => $highPriorityTasks,
+            'overdueTasksCount' => $overdueTasksCount,
             'recentTasks' => $recentTasks,
+            'urgentTasks' => $urgentTasks,
             'lists' => $lists,
         ]);
     })->name('dashboard');
