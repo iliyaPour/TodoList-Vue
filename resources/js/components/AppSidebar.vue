@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
-import { BookOpen, FolderGit2, LayoutGrid, List, CheckSquare } from '@lucide/vue';
+import { BookOpen, FolderGit2, LayoutGrid, List, CheckSquare, UserCheck } from '@lucide/vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
 import NavMain from '@/components/NavMain.vue';
@@ -34,6 +34,11 @@ const mainNavItems: NavItem[] = [
         title: 'Tasks',
         href: tasksRoute.index(),
         icon: CheckSquare,
+    },
+    {
+        title: 'My Tasks',
+        href: '/tasks?assigned_to=me',
+        icon: UserCheck,
     },
 ];
 

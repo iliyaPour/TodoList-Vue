@@ -86,12 +86,14 @@ const props = defineProps<{
     tasks: PaginationTasks;
     lists: TodoList[];
     users: UserSummary[];
+    currentUserId?: number;
     filters: {
         search?: string;
         priority?: string;
         list_id?: string;
         assigned_to?: string;
         status?: string;
+        created_by?: string;
     };
 }>();
 
@@ -100,6 +102,7 @@ const priority = ref(props.filters.priority || '');
 const listId = ref(props.filters.list_id || '');
 const assignedTo = ref(props.filters.assigned_to || '');
 const status = ref(props.filters.status || '');
+const createdBy = ref(props.filters.created_by || '');
 
 const isCreateDialogOpen = ref(false);
 const isEditDialogOpen = ref(false);
@@ -123,13 +126,14 @@ const editForm = useForm({
     due_date: '',
 });
 
-watchDebounced([search, priority, listId, assignedTo, status], () => {
+watchDebounced([search, priority, listId, assignedTo, status, createdBy], () => {
     router.get('/tasks', {
         search: search.value || undefined,
         priority: priority.value || undefined,
         list_id: listId.value || undefined,
         assigned_to: assignedTo.value || undefined,
         status: status.value || undefined,
+        created_by: createdBy.value || undefined,
     }, {
         preserveState: true,
         preserveScroll: true,
@@ -142,7 +146,17 @@ const clearFilters = () => {
     listId.value = '';
     assignedTo.value = '';
     status.value = '';
+    createdBy.value = '';
     router.get('/tasks', {}, { preserveState: true, replace: true });
+};
+
+const setQuickFilter = (opts: { assigned_to?: string; created_by?: string; priority?: string; status?: string }) => {
+    search.value = '';
+    listId.value = '';
+    assignedTo.value = opts.assigned_to || '';
+    createdBy.value = opts.created_by || '';
+    priority.value = opts.priority || '';
+    status.value = opts.status || '';
 };
 
 const toggleTaskCompletion = (task: Task) => {
@@ -202,17 +216,48 @@ const getDueDateBadge = (dueDate: string | null, isCompleted: boolean) => {
         return null;
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
 
-    if (dueDate < today) {
-        return { label: `Overdue: ${dueDate}`, class: 'border-red-300 text-red-700 bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400' };
+    const [y, m, d] = dueDate.slice(0, 10).split('-').map(Number);
+    const targetDate = new Date(y, m - 1, d);
+    targetDate.setHours(0, 0, 0, 0);
+
+    const diffDays = Math.round((targetDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+        const daysPast = Math.abs(diffDays);
+        return {
+            label: daysPast === 1 ? 'Overdue (yesterday)' : `Overdue (${daysPast}d ago)`,
+            class: 'border-red-300 text-red-700 bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 font-semibold',
+        };
     }
 
-    if (dueDate === today) {
-        return { label: 'Due Today', class: 'border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400' };
+    if (diffDays === 0) {
+        return {
+            label: 'Due Today 🔥',
+            class: 'border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400 font-semibold',
+        };
     }
 
-    return { label: `Due: ${dueDate}`, class: 'border-muted text-muted-foreground' };
+    if (diffDays === 1) {
+        return {
+            label: 'Due Tomorrow',
+            class: 'border-blue-300 text-blue-700 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-400 font-medium',
+        };
+    }
+
+    if (diffDays <= 3) {
+        return {
+            label: `Due in ${diffDays} days`,
+            class: 'border-indigo-300 text-indigo-700 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-400',
+        };
+    }
+
+    return {
+        label: dueDate.slice(0, 10),
+        class: 'border-muted text-muted-foreground',
+    };
 };
 </script>
 
@@ -377,6 +422,51 @@ const getDueDateBadge = (dueDate: string | null, isCompleted: boolean) => {
             </Dialog>
         </div>
 
+        <div class="flex flex-wrap items-center gap-2">
+            <Button
+                size="sm"
+                :variant="!assignedTo && !createdBy && !status && !priority && !search && !listId ? 'default' : 'outline'"
+                @click="clearFilters"
+            >
+                All Tasks
+            </Button>
+            <Button
+                size="sm"
+                :variant="assignedTo === 'me' ? 'default' : 'outline'"
+                @click="setQuickFilter({ assigned_to: 'me' })"
+            >
+                👤 Assigned to Me
+            </Button>
+            <Button
+                size="sm"
+                :variant="createdBy === 'others' ? 'default' : 'outline'"
+                @click="setQuickFilter({ created_by: 'others' })"
+            >
+                👥 Added by Friends
+            </Button>
+            <Button
+                size="sm"
+                :variant="priority === 'high' ? 'default' : 'outline'"
+                @click="setQuickFilter({ priority: 'high' })"
+            >
+                🔥 High Priority
+            </Button>
+            <Button
+                size="sm"
+                :variant="status === 'overdue' ? 'default' : 'outline'"
+                @click="setQuickFilter({ status: 'overdue' })"
+            >
+                ⚠️ Overdue
+            </Button>
+            <Button
+                size="sm"
+                :variant="status === 'due_soon' ? 'default' : 'outline'"
+                @click="setQuickFilter({ status: 'due_soon' })"
+            >
+                ⏳ Due Soon (48h)
+            </Button>
+        </div>
+
         <Card>
             <CardHeader>
                 <div class="flex items-center justify-between">
@@ -388,7 +478,7 @@ const getDueDateBadge = (dueDate: string | null, isCompleted: boolean) => {
                 </div>
             </CardHeader>
             <CardContent>
-                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
                     <div class="space-y-2 sm:col-span-2 lg:col-span-1">
                         <Label>Search</Label>
                         <div class="relative">
@@ -416,8 +506,17 @@ const getDueDateBadge = (dueDate: string | null, isCompleted: boolean) => {
                         <Label>Assignee</Label>
                         <select v-model="assignedTo" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                             <option value="">All Team</option>
+                            <option value="me">👤 Assigned to Me</option>
                             <option value="unassigned">Unassigned</option>
                             <option v-for="u in users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+                        </select>
+                    </div>
+                    <div class="space-y-2">
+                        <Label>Creator</Label>
+                        <select v-model="createdBy" class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                            <option value="">All Creators</option>
+                            <option value="others">👥 Added by Friends</option>
+                            <option value="me">👤 Added by Me</option>
                         </select>
                     </div>
                     <div class="space-y-2">
@@ -427,6 +526,7 @@ const getDueDateBadge = (dueDate: string | null, isCompleted: boolean) => {
                             <option value="pending">Pending</option>
                             <option value="completed">Completed</option>
                             <option value="overdue">⚠️ Overdue</option>
+                            <option value="due_soon">⏳ Due Soon (48h)</option>
                         </select>
                     </div>
                 </div>

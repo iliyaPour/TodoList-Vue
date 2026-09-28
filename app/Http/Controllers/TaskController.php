@@ -38,8 +38,16 @@ class TaskController extends Controller
 
         if ($request->input('assigned_to') === 'unassigned') {
             $query->whereNull('assigned_to');
+        } elseif ($request->input('assigned_to') === 'me') {
+            $query->where('assigned_to', $request->user()->id);
         } elseif ($request->filled('assigned_to')) {
             $query->where('assigned_to', $request->assigned_to);
+        }
+
+        if ($request->input('created_by') === 'others') {
+            $query->where('created_by', '!=', $request->user()->id);
+        } elseif ($request->input('created_by') === 'me') {
+            $query->where('created_by', $request->user()->id);
         }
 
         if ($request->status === 'completed') {
@@ -50,6 +58,10 @@ class TaskController extends Controller
             $query->where('completed', false)
                 ->whereNotNull('due_date')
                 ->where('due_date', '<', now()->toDateString());
+        } elseif ($request->status === 'due_soon') {
+            $query->where('completed', false)
+                ->whereNotNull('due_date')
+                ->whereBetween('due_date', [now()->toDateString(), now()->addDays(2)->toDateString()]);
         }
 
         $tasks = $query->latest()->paginate(10)->withQueryString();
@@ -60,7 +72,8 @@ class TaskController extends Controller
             'tasks' => $tasks,
             'lists' => $lists,
             'users' => $users,
-            'filters' => $request->only(['search', 'priority', 'list_id', 'assigned_to', 'status']),
+            'currentUserId' => $request->user()->id,
+            'filters' => $request->only(['search', 'priority', 'list_id', 'assigned_to', 'status', 'created_by']),
         ]);
     }
 
