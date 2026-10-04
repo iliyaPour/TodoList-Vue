@@ -48,10 +48,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->get();
 
         $lists = TodoList::query()
-            ->withCount([
-                'tasks',
-                'tasks as completed_tasks_count' => fn ($q) => $q->where('completed', true),
-            ])
+            ->withCount('tasks')
+            ->withCount(['tasks as completed_tasks_count' => function ($q) {
+                $q->where('completed', true);
+            }])
             ->latest()
             ->get();
 
